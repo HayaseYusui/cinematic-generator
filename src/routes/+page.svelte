@@ -17,6 +17,7 @@
 		type SerializedImageProps
 	} from 'fabric';
 
+	let fileName = $state('');
 	/** 表示用縮尺倍率 */
 	let multiplier = $state(5);
 	/** 原寸幅 */
@@ -158,6 +159,7 @@
 		processing = true;
 		const input = event.target as HTMLInputElement;
 		const file = input.files?.[0];
+		fileName = file?.name.replace(/\.[^/.]+$/, '') ?? '';
 		if (!file) return;
 
 		const reader = new FileReader();
@@ -277,7 +279,7 @@
 
 		const a = document.createElement('a');
 		a.href = imageSrc;
-		a.download = 'image.png';
+		a.download = `${fileName} - cine-sco.png`;
 		document.body.appendChild(a);
 		a.click();
 		document.body.removeChild(a);

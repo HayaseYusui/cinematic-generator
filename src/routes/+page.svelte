@@ -5,6 +5,8 @@
 	const buttonClasses =
 		'rounded border-0 bg-indigo-500 px-6 py-1 text-white hover:bg-indigo-600 focus:outline-none';
 	const labelClasses = 'text-sm leading-7 text-gray-600';
+	const tooltipClass =
+		'max-w-screen pointer-events-none absolute bottom-full mb-2 w-max rounded bg-gray-800 px-2 py-1 text-sm text-white opacity-0 transition-opacity duration-200 group-hover:opacity-100';
 </script>
 
 <script lang="ts">
@@ -43,18 +45,43 @@
 	/** 画像データの生のソース(glfx用) */
 	let texture: any;
 
+	/** チャンネルのマッピング前の値とマッピング後の値 */
+	type CurveChannel = {
+		before: {
+			x: number;
+			y: number;
+		};
+		after: {
+			x: number;
+			y: number;
+		};
+	};
+
 	/** glfx用フィルタープロパティ : https://evanw.github.io/glfx.js/docs/ */
 	type FilterProps = {
 		/** 明るさ */
 		brightness: number;
 		/** コントラスト */
 		contrast: number;
+		/** 画像内の色を任意の関数で変換する */
+		curves: {
+			red: CurveChannel;
+			green: CurveChannel;
+			blue: CurveChannel;
+		};
 		/** 色相 */
 		hue: number;
 		/** 彩度 */
 		saturation: number;
 		/** セピア */
 		sepia: number;
+		/** 高周波成分を増幅する画像シャープニング */
+		unsharpMask: {
+			/** 隣接するピクセルの平均を計算するぼかし半径 */
+			radius: number;
+			/** スケール係数。0 の場合は効果がなく、値が大きいほど効果が強く */
+			strength: number;
+		};
 		/** 彩度が低い色の彩度を変更(-1 は最小の鮮やかさ、0 は変化なし、1 は最大の鮮やかさ) */
 		vibrance: number;
 		/** レンズエッジ暗化効果 */
@@ -64,6 +91,8 @@
 			/** 0は効果なし、1はレンズを最大限暗くする */
 			amount: number;
 		};
+		/** 特定の閾値よりも強いエッジを暗くする */
+		ink: number;
 		/** 画像を円形に膨らませたり、つまんだり */
 		bulgePinch: {
 			/** 効果の円の半径 */
@@ -75,16 +104,53 @@
 
 	/** フィルターオプション(glfx用) */
 	let filterProps: FilterProps = $state({
-		brightness: 0,
-		contrast: 0,
-		hue: 0.05,
+		brightness: 0.1,
+		contrast: 0.3,
+		curves: {
+			red: {
+				before: {
+					x: 0,
+					y: 0
+				},
+				after: {
+					x: 1,
+					y: 1
+				}
+			},
+			green: {
+				before: {
+					x: 0,
+					y: 0
+				},
+				after: {
+					x: 1,
+					y: 1
+				}
+			},
+			blue: {
+				before: {
+					x: 0,
+					y: 0
+				},
+				after: {
+					x: 1,
+					y: 1
+				}
+			}
+		},
+		hue: 0.02,
 		saturation: 0.2,
 		sepia: 0,
-		vibrance: 0,
+		unsharpMask: {
+			radius: 12,
+			strength: 0.4
+		},
+		vibrance: -0.1,
 		vignette: {
 			size: 0,
-			amount: 0
+			amount: 0.5
 		},
+		ink: 0,
 		bulgePinch: {
 			radius: 200,
 			strength: 0
@@ -247,9 +313,25 @@
 				filterProps.bulgePinch.strength
 			)
 			.hueSaturation(filterProps.hue, filterProps.saturation)
+			.curves(
+				[
+					[filterProps.curves.red.before.x, filterProps.curves.red.before.y],
+					[filterProps.curves.red.after.x, filterProps.curves.red.after.y]
+				],
+				[
+					[filterProps.curves.green.before.x, filterProps.curves.green.before.y],
+					[filterProps.curves.green.after.x, filterProps.curves.green.after.y]
+				],
+				[
+					[filterProps.curves.blue.before.x, filterProps.curves.blue.before.y],
+					[filterProps.curves.blue.after.x, filterProps.curves.blue.after.y]
+				]
+			)
 			.vignette(filterProps.vignette.size, filterProps.vignette.amount)
 			.sepia(filterProps.sepia)
 			.vibrance(filterProps.vibrance)
+			.unsharpMask(filterProps.unsharpMask.radius, filterProps.unsharpMask.strength)
+			.ink(filterProps.ink)
 			.update();
 
 		const resultURL = fxCanvas.toDataURL();
@@ -305,6 +387,9 @@
 			}
 		});
 	}
+	const size = 100;
+	const toX = (x: number) => x * size;
+	const toY = (y: number) => (1 - y) * size; // SVGのy軸反転
 </script>
 
 <svelte:head>
@@ -386,7 +471,10 @@
 		<button onclick={deleteImage} class={`w-full ${buttonClasses}`}>画像を削除</button>
 		<div class={`${labelClasses}`}>加工</div>
 		<div class="grid grid-cols-[10rem_auto] gap-2 md:grid-cols-[10rem_auto_10rem_auto] md:gap-4">
-			<label for="brightness" class={`${labelClasses}`}>明るさ</label>
+			<div class="group relative inline-block">
+				<label for="brightness" class={`${labelClasses}`}>明るさ</label>
+				<div class={`${tooltipClass}`}>明るさを加算します。</div>
+			</div>
 			<input
 				type="number"
 				id="brightness"
@@ -397,7 +485,10 @@
 				bind:value={filterProps.brightness}
 				class={`w-full ${textBoxClasses}`}
 			/>
-			<label for="contrast" class={`${labelClasses}`}>コントラスト</label>
+			<div class="group relative inline-block">
+				<label for="contrast" class={`${labelClasses}`}>コントラスト</label>
+				<div class={`${tooltipClass}`}>コントラストを乗算します。</div>
+			</div>
 			<input
 				type="number"
 				id="contrast"
@@ -408,7 +499,262 @@
 				bind:value={filterProps.contrast}
 				class={`w-full ${textBoxClasses}`}
 			/>
-			<label for="hue" class={`${labelClasses}`}>色相</label>
+			<div class="group relative col-span-full inline-block">
+				<div class={`${labelClasses}`}>カーブ(赤・緑・青チャンネル)</div>
+				<div class={`${tooltipClass}`}>画像の色を２次元の点の集合の間で補間します。</div>
+			</div>
+			<div class="col-span-full grid grid-cols-3 gap-4">
+				<div style="width: fit-content;">
+					<!-- 上スライダー（after.x） -->
+					<div style="text-align: center; margin-right: 5px;">
+						<input
+							type="range"
+							min="0"
+							max="1"
+							step="0.01"
+							bind:value={filterProps.curves.red.after.x}
+						/>
+					</div>
+
+					<div style="display: flex; align-items: center;">
+						<!-- 左スライダー（before.y） -->
+						<div style="writing-mode: vertical-lr; transform: rotate(180deg); margin-right: 5px;">
+							<input
+								type="range"
+								min="0"
+								max="1"
+								step="0.01"
+								bind:value={filterProps.curves.red.before.y}
+							/>
+						</div>
+
+						<!-- SVG描画エリア -->
+						<svg width={size} height={size} style="border: 1px solid #ccc; background: #f8f8f8;">
+							<!-- 点を結ぶ線 -->
+							<line
+								x1={toX(filterProps.curves.red.before.x)}
+								y1={toY(filterProps.curves.red.before.y)}
+								x2={toX(filterProps.curves.red.after.x)}
+								y2={toY(filterProps.curves.red.after.y)}
+								stroke="red"
+								stroke-width="2"
+							/>
+
+							<!-- before点 -->
+							<circle
+								cx={toX(filterProps.curves.red.before.x)}
+								cy={toY(filterProps.curves.red.before.y)}
+								r="5"
+								fill="red"
+							/>
+
+							<!-- after点 -->
+							<circle
+								cx={toX(filterProps.curves.red.after.x)}
+								cy={toY(filterProps.curves.red.after.y)}
+								r="5"
+								fill="red"
+							/>
+						</svg>
+
+						<!-- 右スライダー（after.y） -->
+						<div style="writing-mode: sideways-lr; margin-left: 5px;">
+							<input
+								type="range"
+								min="0"
+								max="1"
+								step="0.01"
+								bind:value={filterProps.curves.red.after.y}
+							/>
+						</div>
+					</div>
+
+					<!-- 下スライダー（before.x） -->
+					<div style="text-align: center; margin-top: 5px;">
+						<input
+							type="range"
+							min="0"
+							max="1"
+							step="0.01"
+							bind:value={filterProps.curves.red.before.x}
+						/>
+					</div>
+				</div>
+				<div style="width: fit-content;">
+					<!-- 上スライダー（after.x） -->
+					<div style="text-align: center; margin-right: 5px;">
+						<input
+							type="range"
+							min="0"
+							max="1"
+							step="0.01"
+							bind:value={filterProps.curves.green.after.x}
+						/>
+					</div>
+
+					<div style="display: flex; align-items: center;">
+						<!-- 左スライダー（before.y） -->
+						<div style="writing-mode: vertical-lr; transform: rotate(180deg); margin-right: 5px;">
+							<input
+								type="range"
+								min="0"
+								max="1"
+								step="0.01"
+								bind:value={filterProps.curves.green.before.y}
+							/>
+						</div>
+
+						<!-- SVG描画エリア -->
+						<svg width={size} height={size} style="border: 1px solid #ccc; background: #f8f8f8;">
+							<!-- 点を結ぶ線 -->
+							<line
+								x1={toX(filterProps.curves.green.before.x)}
+								y1={toY(filterProps.curves.green.before.y)}
+								x2={toX(filterProps.curves.green.after.x)}
+								y2={toY(filterProps.curves.green.after.y)}
+								stroke="green"
+								stroke-width="2"
+							/>
+
+							<!-- before点 -->
+							<circle
+								cx={toX(filterProps.curves.green.before.x)}
+								cy={toY(filterProps.curves.green.before.y)}
+								r="5"
+								fill="green"
+							/>
+
+							<!-- after点 -->
+							<circle
+								cx={toX(filterProps.curves.green.after.x)}
+								cy={toY(filterProps.curves.green.after.y)}
+								r="5"
+								fill="green"
+							/>
+						</svg>
+
+						<!-- 右スライダー（after.y） -->
+						<div style="writing-mode: sideways-lr; margin-left: 5px;">
+							<input
+								type="range"
+								min="0"
+								max="1"
+								step="0.01"
+								bind:value={filterProps.curves.green.after.y}
+							/>
+						</div>
+					</div>
+
+					<!-- 下スライダー（before.x） -->
+					<div style="text-align: center; margin-top: 5px;">
+						<input
+							type="range"
+							min="0"
+							max="1"
+							step="0.01"
+							bind:value={filterProps.curves.green.before.x}
+						/>
+					</div>
+				</div>
+				<div style="width: fit-content;">
+					<!-- 上スライダー（after.x） -->
+					<div style="text-align: center; margin-right: 5px;">
+						<input
+							type="range"
+							min="0"
+							max="1"
+							step="0.01"
+							bind:value={filterProps.curves.blue.after.x}
+						/>
+					</div>
+
+					<div style="display: flex; align-items: center;">
+						<!-- 左スライダー（before.y） -->
+						<div style="writing-mode: vertical-lr; transform: rotate(180deg); margin-right: 5px;">
+							<input
+								type="range"
+								min="0"
+								max="1"
+								step="0.01"
+								bind:value={filterProps.curves.blue.before.y}
+							/>
+						</div>
+
+						<!-- SVG描画エリア -->
+						<svg width={size} height={size} style="border: 1px solid #ccc; background: #f8f8f8;">
+							<!-- 点を結ぶ線 -->
+							<line
+								x1={toX(filterProps.curves.blue.before.x)}
+								y1={toY(filterProps.curves.blue.before.y)}
+								x2={toX(filterProps.curves.blue.after.x)}
+								y2={toY(filterProps.curves.blue.after.y)}
+								stroke="blue"
+								stroke-width="2"
+							/>
+
+							<!-- before点 -->
+							<circle
+								cx={toX(filterProps.curves.blue.before.x)}
+								cy={toY(filterProps.curves.blue.before.y)}
+								r="5"
+								fill="blue"
+							/>
+
+							<!-- after点 -->
+							<circle
+								cx={toX(filterProps.curves.blue.after.x)}
+								cy={toY(filterProps.curves.blue.after.y)}
+								r="5"
+								fill="blue"
+							/>
+						</svg>
+
+						<!-- 右スライダー（after.y） -->
+						<div style="writing-mode: sideways-lr; margin-left: 5px;">
+							<input
+								type="range"
+								min="0"
+								max="1"
+								step="0.01"
+								bind:value={filterProps.curves.blue.after.y}
+							/>
+						</div>
+					</div>
+
+					<!-- 下スライダー（before.x） -->
+					<div style="text-align: center; margin-top: 5px;">
+						<input
+							type="range"
+							min="0"
+							max="1"
+							step="0.01"
+							bind:value={filterProps.curves.green.before.x}
+						/>
+					</div>
+				</div>
+			</div>
+			<div class="group relative inline-block">
+				<label for="sepia" class={`${labelClasses}`}>セピア</label>
+				<div class={`${tooltipClass}`}>
+					古い写真を模した赤茶色のモノクローム色調を画像に与えます。
+				</div>
+			</div>
+			<input
+				type="number"
+				id="sepia"
+				name="sepia"
+				min="0"
+				max="1"
+				step="0.01"
+				bind:value={filterProps.sepia}
+				class={`w-full ${textBoxClasses}`}
+			/>
+			<div class="group relative inline-block">
+				<label for="hue" class={`${labelClasses}`}>色相</label>
+				<div class={`${tooltipClass}`}>
+					黒（0、0、0）から白（1、1、1）までの直線であるグレースケール線を中心に色ベクトルを回転させます。
+				</div>
+			</div>
 			<input
 				type="number"
 				id="hue"
@@ -419,18 +765,12 @@
 				bind:value={filterProps.hue}
 				class={`w-full ${textBoxClasses}`}
 			/>
-			<label for="sepia" class={`${labelClasses}`}>セピア</label>
-			<input
-				type="number"
-				id="sepia"
-				name="sepia"
-				min="-1"
-				max="1"
-				step="0.01"
-				bind:value={filterProps.sepia}
-				class={`w-full ${textBoxClasses}`}
-			/>
-			<label for="saturation" class={`${labelClasses}`}>彩度</label>
+			<div class="group relative inline-block">
+				<label for="saturation" class={`${labelClasses}`}>彩度</label>
+				<div class={`${tooltipClass}`}>
+					すべてのカラーチャンネル値を平均カラーチャンネル値に向かって、または平均カラーチャンネル値から離れるようにスケーリングします。
+				</div>
+			</div>
 			<input
 				type="number"
 				id="saturation"
@@ -441,7 +781,13 @@
 				bind:value={filterProps.saturation}
 				class={`w-full ${textBoxClasses}`}
 			/>
-			<label for="vibrance" class={`${labelClasses}`}>自然な彩度</label>
+			<div class="group relative inline-block">
+				<label for="vibrance" class={`${labelClasses}`}>自然な彩度</label>
+				<div class={`${tooltipClass}`}>
+					彩度の低い色の彩度を変更します、彩度の高い色は変更しません。<br />
+					-1 は最小の鮮やかさ、0 は変化なし、1 は最大の鮮やかさ
+				</div>
+			</div>
 			<input
 				type="number"
 				id="vibrance"
@@ -452,40 +798,120 @@
 				bind:value={filterProps.vibrance}
 				class={`w-full ${textBoxClasses}`}
 			/>
-			<label for="vignette.size" class={`${labelClasses}`}>ビネット：大きさ</label>
+			<div class="group relative inline-block">
+				<label for="ink" class={`${labelClasses}`}>エッジ</label>
+				<div class={`${tooltipClass}`}>
+					ある閾値より強いエッジを暗くすることで、画像の輪郭をインクでシミュレートします。
+					<br
+					/>エッジ検出値は、それぞれ異なる半径のぼかしを使ってぼかした画像の2つのコピーの差です。
+					<br
+					/>通常は0から1の範囲の値で十分で、0では画像は変化せず、1では黒いエッジがたくさん追加されます。<br
+					/>負の値を指定すると、インクのエッジは黒ではなく白になります。
+				</div>
+			</div>
+			<input
+				type="number"
+				id="ink"
+				name="ink"
+				min="-1"
+				max="1"
+				step="0.01"
+				bind:value={filterProps.ink}
+				class={`w-full ${textBoxClasses}`}
+			/>
+			<div class="group relative inline-block"></div>
+			<div></div>
+			<div class="group relative inline-block">
+				<label for="unsharpMask.radius" class={`${labelClasses}`}>明瞭度：半径</label>
+				<div class={`${tooltipClass}`}>
+					画像の高周波を増幅するシャープニングの一種。ピクセルを隣接するピクセルの平均値からスケーリングします。<br
+					/>
+					半径：隣接ピクセルの平均を計算するぼかし半径。
+				</div>
+			</div>
+			<input
+				type="number"
+				id="unsharpMask.radius"
+				name="unsharpMask.radius"
+				min="0"
+				step="1"
+				bind:value={filterProps.unsharpMask.radius}
+				class={`w-full ${textBoxClasses}`}
+			/>
+			<div class="group relative inline-block">
+				<label for="unsharpMask.strength" class={`${labelClasses}`}>明瞭度：強度</label>
+				<div class={`${tooltipClass}`}>
+					画像の高周波を増幅するシャープニングの一種。ピクセルを隣接するピクセルの平均値からスケーリングします。<br
+					/>
+					強度：0は効果がなく、値が大きいほど効果が強くなる。
+				</div>
+			</div>
+			<input
+				type="number"
+				id="unsharpMask.strength"
+				name="unsharpMask.strength"
+				min="0"
+				step="0.1"
+				bind:value={filterProps.unsharpMask.strength}
+				class={`w-full ${textBoxClasses}`}
+			/>
+			<div class="group relative inline-block">
+				<label for="vignette.size" class={`${labelClasses}`}>ビネット加工：位置</label>
+				<div class={`${tooltipClass}`}>
+					画像の端を暗くする効果をシミュレートします。
+					<br />位置：フレームの中央は0、フレームの端は1
+				</div>
+			</div>
 			<input
 				type="number"
 				id="vignette.size"
 				name="vignette.size"
-				min="-1"
+				min="0"
 				max="1"
 				step="0.01"
 				bind:value={filterProps.vignette.size}
 				class={`w-full ${textBoxClasses}`}
 			/>
-			<label for="vignette.amount" class={`${labelClasses}`}>ビネット：効果量</label>
+			<div class="group relative inline-block">
+				<label for="vignette.amount" class={`${labelClasses}`}>ビネット加工：強度</label>
+				<div class={`${tooltipClass}`}>
+					画像の端を暗くする効果をシミュレートします。
+					<br />強度：0は効果なし、1はレンズを最大に暗くする
+				</div>
+			</div>
 			<input
 				type="number"
 				id="vignette.amount"
 				name="vignette.amount"
-				min="-1"
+				min="0"
 				max="1"
 				step="0.01"
 				bind:value={filterProps.vignette.amount}
 				class={`w-full ${textBoxClasses}`}
 			/>
-			<label for="bulgePinch.radius" class={`${labelClasses}`}>レンズ膨らみ効果：半径</label>
+			<div class="group relative inline-block">
+				<label for="bulgePinch.radius" class={`${labelClasses}`}>レンズ膨らみ効果：半径</label>
+				<div class={`${tooltipClass}`}>
+					画像を円形に膨らませたり、つまんだりする。
+					<br />半径：効果円の半径
+				</div>
+			</div>
 			<input
 				type="number"
 				id="bulgePinch.radius"
 				name="bulgePinch.radius"
-				min="-1"
-				max="1"
-				step="0.01"
+				min="0"
+				step="0.1"
 				bind:value={filterProps.bulgePinch.radius}
 				class={`w-full ${textBoxClasses}`}
 			/>
-			<label for="bulgePinch.strength" class={`${labelClasses}`}>レンズ膨らみ効果：強度</label>
+			<div class="group relative inline-block">
+				<label for="bulgePinch.strength" class={`${labelClasses}`}>レンズ膨らみ効果：強度</label>
+				<div class={`${tooltipClass}`}>
+					画像を円形に膨らませたり、つまんだりする。
+					<br />強度：-1 は強いつまみ、0 は効果なし、1 は強い膨らみ
+				</div>
+			</div>
 			<input
 				type="number"
 				id="bulgePinch.strength"
